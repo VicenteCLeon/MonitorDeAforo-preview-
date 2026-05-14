@@ -1,111 +1,51 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-@layer base {
-  :root {
-    /* Variables de diseño originales */
-    --text: #6b6375;
-    --text-h: #08060d;
-    --bg: #ffffff;
-    --border: oklch(0.922 0 0);
-    --code-bg: #f4f3ec;
-    --accent: oklch(0.97 0 0);
-    --accent-bg: rgba(170, 59, 255, 0.1);
-    --accent-border: rgba(170, 59, 255, 0.5);
-    --social-bg: rgba(244, 243, 236, 0.5);
-    --shadow: rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+@theme {
+  /* Cool-neutral surfaces */
+  --color-bg: #E7E7E0;
+  --color-surface: #ffffff;
+  --color-surface-2: #fafbfc;
+  --color-line: #e6e8ec;
+  --color-line-strong: #d5d8de;
+  --color-ink: #16181d;
+  --color-ink-2: #3a3f49;
+  --color-ink-3: #6b7280;
+  --color-ink-4: #9aa0aa;
 
-    --radius: 0.625rem;
+  /* Semáforo — misma chroma/lightness, varía sólo el hue */
+  --color-ok: oklch(0.68 0.16 145);
+  --color-ok-bg: oklch(0.95 0.04 145);
+  --color-warn: oklch(0.78 0.16 80);
+  --color-warn-bg: oklch(0.96 0.05 85);
+  --color-danger: oklch(0.62 0.18 25);
+  --color-danger-bg: oklch(0.95 0.04 25);
 
-    /* Shadcn UI Variables (Hsl/Oklch compatible con tu config) */
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --destructive-foreground: oklch(0.985 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
+  --font-sans: "Helvetica Neue", Helvetica, Arial, "Inter", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Semáforo pulse */
+@keyframes sc-pulse {
+  0% {
+    box-shadow: 0 0 0 0 oklch(0.68 0.16 145 / 0.55);
   }
-
-  .dark {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
+  70% {
+    box-shadow: 0 0 0 7px oklch(0.68 0.16 145 / 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 oklch(0.68 0.16 145 / 0);
   }
 }
 
-@layer base {
-  * {
-    @apply border-border;
-  }
-  body {
-    @apply bg-background text-foreground;
-    margin: 0;
-    font-family: system-ui, -apple-system, sans-serif;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-  }
-}
-
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
-}
-
-h1, h2 {
-  font-weight: 500;
-  color: var(--text-h);
-}
-
-h1 {
-  font-size: 3.5rem;
-  letter-spacing: -1.68px;
-  margin: 2rem 0;
-}
-
-h2 {
-  font-size: 1.5rem;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 0.5rem;
-}
-
-code {
-  font-family: ui-monospace, Consolas, monospace;
-  font-size: 0.9375rem;
-  line-height: 135%;
-  padding: 0.25rem 0.5rem;
-  background: var(--code-bg);
-  border-radius: 4px;
-  color: var(--text-h);
+.sc-pulse {
+  animation: sc-pulse 1.8s ease-out infinite;
 }

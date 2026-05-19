@@ -6,12 +6,14 @@ export interface Faculty {
   cap: number;
   occ: number;
   building: string;
-  /** Número de cámaras YOLO conectadas en los accesos */
   cams: number;
-  /** Frames por segundo del pipeline de visión */
   fps: number;
   delta?: number;
   lastUpd?: number;
+  /** Estado de conexión de la cámara (viene del backend) */
+  online?: boolean;
+  /** URL del stream MJPEG de la cámara */
+  streamUrl?: string;
 }
 
 export interface DayPoint {

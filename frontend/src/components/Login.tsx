@@ -67,12 +67,16 @@ export default function Login({ onSuccess }: LoginProps) {
   return (
     <div className="min-h-screen bg-bg">
       <div className="relative min-h-screen overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,170,120,0.35),transparent_55%),radial-gradient(circle_at_bottom_right,rgba(120,170,255,0.25),transparent_55%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgb(68, 128, 207),transparent_55%),radial-gradient(circle_at_bottom_right,rgba(120,170,255,0.25),transparent_55%)]" />
         <div className="relative z-10 flex min-h-screen items-center justify-center px-4 py-10">
           <div className="w-full max-w-[420px] rounded-[18px] border border-line bg-surface/90 p-6 shadow-[0_20px_80px_rgba(20,20,20,0.15)] backdrop-blur">
             <div className="mb-5">
-              <div className="text-[11px] font-semibold tracking-[0.3em] text-ink-4">PUCV · MONITOR</div>
-              <h1 className="mt-2 text-[22px] font-semibold text-ink">Inicio de sesion</h1>
+              <div className="flex flex-col items-start gap-3">
+                <div className="w-full rounded-[14px] bg-ink/5 border border-line p-3">
+                  <img src="/Logo1.png" alt="SpotCheck" className="w-full h-auto" />
+                </div>
+              </div>
+              <h1 className="mt-3 text-[22px] font-semibold text-ink">Inicio de sesion</h1>
               <p className="mt-1 text-[12.5px] text-ink-3">
                 Solo correos institucionales pueden acceder al panel.
               </p>
@@ -91,7 +95,6 @@ export default function Login({ onSuccess }: LoginProps) {
 
             <div className="mt-5 flex items-center justify-between text-[11px] text-ink-4">
               <span>Acceso seguro</span>
-              <span>Campus PUCV</span>
             </div>
           </div>
         </div>

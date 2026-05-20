@@ -1,9 +1,17 @@
-import { ACTIVITY } from "../data";
+import type { ActivityEntry } from "../types";
 
-export default function ActivityLog() {
+interface ActivityLogProps {
+  entries: ActivityEntry[];
+}
+
+export default function ActivityLog({ entries }: ActivityLogProps) {
+  if (entries.length === 0) {
+    return <div className="text-[12px] text-ink-3">Sin actividad reciente.</div>;
+  }
+
   return (
     <div className="flex flex-col">
-      {ACTIVITY.map((a, i) => (
+      {entries.map((a, i) => (
         <div
           key={i}
           className="flex gap-2.5 py-2.5 items-center text-[12px] border-b border-dashed border-line last:border-b-0"

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import type { Faculty, DayPoint } from "./types";
-import { statusOf, fmt, genSpark } from "./data";
+import type { Faculty, DayPoint, ActivityEntry } from "./types";
+import { statusOf, fmt, genSpark, clockNow } from "./data";
 import { fetchCameras, streamUrl, CAMERA_META, fetchHourlyOccupancy, TOTAL_CAPACITY } from "./api";
 import type { CameraDTO } from "./api";
 import TopBar from "./components/TopBar";
@@ -16,6 +16,7 @@ const SEMAFORO_STYLE = "tower" as const;
 const SHOW_SPARK = true;
 const POLL_MS = 2000;
 const HISTORY_MS = 60000;
+const AUTH_STORAGE_KEY = "monitor-aforo-authed";
 
 export default function App() {
   const [now, setNow] = useState(new Date());
@@ -24,6 +25,14 @@ export default function App() {
   const [connError, setConnError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [isAuthed, setIsAuthed] = useState(false);
+  const [activity, setActivity] = useState<ActivityEntry[]>([]);
+
+  useEffect(() => {
+    const stored = localStorage.getItem(AUTH_STORAGE_KEY);
+    if (stored === "true") {
+      setIsAuthed(true);
+    }
+  }, []);
 
   // Reloj
   useEffect(() => {
@@ -40,11 +49,12 @@ export default function App() {
       try {
         const cams: CameraDTO[] = await fetchCameras();
         if (cancelled) return;
+        let nextEvents: ActivityEntry[] = [];
         setFaculties((prev) => {
-          const prevOcc = new Map(prev.map((f) => [f.id, f.occ]));
-          return cams.map((c) => {
+          const prevMap = new Map(prev.map((f) => [f.id, f]));
+          const next = cams.map((c) => {
             const meta = CAMERA_META[c.id] ?? { capacity: 50, building: "Sin ubicación" };
-            const prevCount = prevOcc.get(c.id) ?? c.count;
+            const prevCount = prevMap.get(c.id)?.occ ?? c.count;
             return {
               id: c.id,
               name: c.name,
@@ -59,7 +69,83 @@ export default function App() {
               streamUrl: streamUrl(c.id),
             };
           });
+          const timeLabel = clockNow(new Date());
+          const events: ActivityEntry[] = [];
+
+          for (const f of next) {
+            const prevF = prevMap.get(f.id);
+            if (!prevF) continue;
+
+            if (prevF.online !== false && f.online === false) {
+              events.push({
+                t: timeLabel,
+                kind: "danger",
+                text: (
+                  <span>
+                    <b>{f.name}</b> camara offline
+                  </span>
+                ),
+              });
+            } else if (prevF.online === false && f.online !== false) {
+              events.push({
+                t: timeLabel,
+                kind: "ok",
+                text: (
+                  <span>
+                    <b>{f.name}</b> camara en linea
+                  </span>
+                ),
+              });
+            }
+
+            if (f.cap > 0) {
+              const prevPct = (prevF.occ / f.cap) * 100;
+              const nextPct = (f.occ / f.cap) * 100;
+              const prevStatus = statusOf(prevPct, WARN_T, DANGER_T);
+              const nextStatus = statusOf(nextPct, WARN_T, DANGER_T);
+
+              if (prevStatus !== nextStatus) {
+                if (nextStatus === "danger") {
+                  events.push({
+                    t: timeLabel,
+                    kind: "danger",
+                    text: (
+                      <span>
+                        <b>{f.name}</b> supero {DANGER_T}% de aforo
+                      </span>
+                    ),
+                  });
+                } else if (nextStatus === "warn") {
+                  events.push({
+                    t: timeLabel,
+                    kind: "warn",
+                    text: (
+                      <span>
+                        <b>{f.name}</b> entro en zona ambar
+                      </span>
+                    ),
+                  });
+                } else {
+                  events.push({
+                    t: timeLabel,
+                    kind: "ok",
+                    text: (
+                      <span>
+                        <b>{f.name}</b> volvio a nivel normal
+                      </span>
+                    ),
+                  });
+                }
+              }
+            }
+          }
+
+          nextEvents = events;
+          return next;
         });
+        if (nextEvents.length > 0) {
+          setActivity((prev) => [...nextEvents, ...prev].slice(0, 8));
+        }
         setConnError(null);
       } catch {
         if (!cancelled) setConnError("Sin conexión con el backend (puerto 8000)");
@@ -75,6 +161,16 @@ export default function App() {
       clearInterval(id);
     };
   }, [isAuthed]);
+
+  function handleLogout() {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    setIsAuthed(false);
+    setFaculties([]);
+    setDayCurve([]);
+    setConnError(null);
+    setLoading(true);
+    setActivity([]);
+  }
 
   // Histórico desde Supabase
   useEffect(() => {
@@ -113,6 +209,7 @@ export default function App() {
         onSuccess={() => {
           setConnError(null);
           setLoading(true);
+          localStorage.setItem(AUTH_STORAGE_KEY, "true");
           setIsAuthed(true);
         }}
       />
@@ -131,7 +228,7 @@ export default function App() {
     <div className="min-h-screen bg-bg">
       <div className="px-3 pt-3 pb-[88px] md:px-7 md:pt-5 md:pb-10 max-w-[1440px] mx-auto">
 
-        <TopBar now={now} overallStatus={overallStatus} />
+        <TopBar now={now} overallStatus={overallStatus} onLogout={handleLogout} />
 
         {connError && (
           <div className="mt-3 px-3.5 py-2.5 rounded-[10px] border border-danger bg-danger-bg text-danger text-[12px] font-medium flex items-center gap-2">
@@ -142,7 +239,7 @@ export default function App() {
           </div>
         )}
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 mt-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 mt-3">
           <KpiCard
             label="Aforo total" value={fmt(totalOcc)} unit={`/ ${fmt(totalCap)}`}
             delta={`${overallPct}%`}
@@ -216,39 +313,11 @@ export default function App() {
               <h3 className="m-0 text-[13px] md:text-[13.5px] font-semibold">Actividad reciente</h3>
               <span className="text-ink-3 text-[11.5px]">Últimos eventos</span>
             </div>
-            <ActivityLog />
+            <ActivityLog entries={activity} />
           </div>
         </div>
       </div>
 
-      <nav className="fixed bottom-0 inset-x-0 md:hidden bg-surface border-t border-line z-50"
-        style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>
-        <div className="grid grid-cols-4 h-14">
-          {[
-            {
-              label: "Inicio", active: true,
-              icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></svg>
-            },
-            {
-              label: "Mapa", active: false,
-              icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 1 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg>
-            },
-            {
-              label: "Alertas", active: false,
-              icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" /></svg>
-            },
-            {
-              label: "Cuenta", active: false,
-              icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4" /><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" /></svg>
-            },
-          ].map(({ icon, label, active }) => (
-            <button key={label} className={`flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors ${active ? "text-ink" : "text-ink-4"}`}>
-              {icon}
-              {label}
-            </button>
-          ))}
-        </div>
-      </nav>
     </div>
   );
 }

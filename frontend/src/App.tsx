@@ -1,26 +1,29 @@
-import { useEffect, useMemo, useState } from "react";
-import type { Faculty } from "./types";
-import { statusOf, fmt, genDayCurve, genSpark } from "./data";
-import { fetchCameras, streamUrl, CAMERA_META } from "./api";
+import { useEffect, useState } from "react";
+import type { Faculty, DayPoint } from "./types";
+import { statusOf, fmt, genSpark } from "./data";
+import { fetchCameras, streamUrl, CAMERA_META, fetchHourlyOccupancy, TOTAL_CAPACITY } from "./api";
 import type { CameraDTO } from "./api";
 import TopBar from "./components/TopBar";
 import KpiCard from "./components/KpiCard";
 import FacultyCard from "./components/FacultyCard";
 import DayChart from "./components/DayChart";
 import ActivityLog from "./components/ActivityLog";
+import Login from "./components/Login";
 
 const WARN_T = 60;
 const DANGER_T = 85;
 const SEMAFORO_STYLE = "tower" as const;
 const SHOW_SPARK = true;
 const POLL_MS = 2000;
+const HISTORY_MS = 60000;
 
 export default function App() {
   const [now, setNow] = useState(new Date());
   const [faculties, setFaculties] = useState<Faculty[]>([]);
+  const [dayCurve, setDayCurve] = useState<DayPoint[]>([]);
   const [connError, setConnError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const dayCurve = useMemo(() => genDayCurve(), []);
+  const [isAuthed, setIsAuthed] = useState(false);
 
   // Reloj
   useEffect(() => {
@@ -28,8 +31,9 @@ export default function App() {
     return () => clearInterval(id);
   }, []);
 
-  // Polling al backend real
+  // Polling de cámaras al backend local
   useEffect(() => {
+    if (!isAuthed) return;
     let cancelled = false;
 
     async function poll() {
@@ -70,7 +74,50 @@ export default function App() {
       cancelled = true;
       clearInterval(id);
     };
-  }, []);
+  }, [isAuthed]);
+
+  // Histórico desde Supabase
+  useEffect(() => {
+    if (!isAuthed) return;
+    let cancelled = false;
+
+    async function loadHistory() {
+      try {
+        const hourly = await fetchHourlyOccupancy();
+        if (cancelled) return;
+        const points: DayPoint[] = hourly.map((h) => {
+          const people = Number(h.people) || 0;
+          return {
+            t: Number(h.bucket),
+            people: Math.round(people),
+            pct: TOTAL_CAPACITY > 0 ? people / TOTAL_CAPACITY : 0,
+          };
+        });
+        setDayCurve(points);
+      } catch {
+        // si falla, el gráfico queda vacío — no es crítico
+      }
+    }
+
+    loadHistory();
+    const id = setInterval(loadHistory, HISTORY_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [isAuthed]);
+
+  if (!isAuthed) {
+    return (
+      <Login
+        onSuccess={() => {
+          setConnError(null);
+          setLoading(true);
+          setIsAuthed(true);
+        }}
+      />
+    );
+  }
 
   const totalOcc = faculties.reduce((s, f) => s + f.occ, 0);
   const totalCap = faculties.reduce((s, f) => s + f.cap, 0);
@@ -86,7 +133,6 @@ export default function App() {
 
         <TopBar now={now} overallStatus={overallStatus} />
 
-        {/* Banner de error de conexión */}
         {connError && (
           <div className="mt-3 px-3.5 py-2.5 rounded-[10px] border border-danger bg-danger-bg text-danger text-[12px] font-medium flex items-center gap-2">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -96,7 +142,6 @@ export default function App() {
           </div>
         )}
 
-        {/* KPIs */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 mt-3">
           <KpiCard
             label="Aforo total" value={fmt(totalOcc)} unit={`/ ${fmt(totalCap)}`}
@@ -123,7 +168,6 @@ export default function App() {
           />
         </div>
 
-        {/* Section header */}
         <div className="mx-1 mt-6 mb-3">
           <div className="flex flex-wrap items-end justify-between gap-2">
             <div>
@@ -138,7 +182,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Camera grid */}
         {loading ? (
           <div className="text-ink-3 text-[12px] py-10 text-center">Conectando con el backend…</div>
         ) : faculties.length === 0 ? (
@@ -151,22 +194,21 @@ export default function App() {
           </div>
         )}
 
-        {/* Chart + activity */}
         <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-2.5 mt-2.5">
           <div className="bg-surface border border-line rounded-[14px] px-4 py-4">
             <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
               <div>
-                <h3 className="m-0 text-[13px] md:text-[13.5px] font-semibold">Ocupación del campus · hoy</h3>
-                <div className="text-ink-3 text-[11px] mt-0.5 hidden sm:block">Datos de ejemplo · histórico llegará con la persistencia</div>
-              </div>
-              <div className="inline-flex border border-line rounded-lg overflow-hidden bg-surface-2">
-                {["1H", "HOY", "SEMANA", "MES"].map((s) => (
-                  <button key={s} className={`border-0 px-2 md:px-2.5 py-[5px] text-[11px] md:text-[11.5px] font-mono ${s === "HOY" ? "bg-surface text-ink shadow-[0_0_0_1px_var(--color-line-strong)_inset]" : "bg-transparent text-ink-3"
-                    }`}>{s}</button>
-                ))}
+                <h3 className="m-0 text-[13px] md:text-[13.5px] font-semibold">Ocupación del campus · histórico</h3>
+                <div className="text-ink-3 text-[11px] mt-0.5 hidden sm:block">Cada 10 min · últimas 6 h · datos en tiempo real</div>
               </div>
             </div>
-            <DayChart data={dayCurve} warnT={WARN_T} dangerT={DANGER_T} />
+            {dayCurve.length >= 2 ? (
+              <DayChart data={dayCurve} warnT={WARN_T} dangerT={DANGER_T} />
+            ) : (
+              <div className="h-[200px] flex items-center justify-center text-center text-ink-3 text-[12px] px-4">
+                Recopilando datos… el gráfico se dibuja cuando haya registros de al menos 2 horas distintas.
+              </div>
+            )}
           </div>
 
           <div className="bg-surface border border-line rounded-[14px] px-4 py-4">
@@ -179,7 +221,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* Mobile bottom nav */}
       <nav className="fixed bottom-0 inset-x-0 md:hidden bg-surface border-t border-line z-50"
         style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>
         <div className="grid grid-cols-4 h-14">

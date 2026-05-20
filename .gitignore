@@ -6,7 +6,7 @@ backend/*.py[cod]
 backend/*$py.class
 backend/.pytest_cache/
 backend/requirements.txt.bak
-
+backend/config.py
 # --- Modelos de IA (Pesados) ---
 *.pt
 *.onnx

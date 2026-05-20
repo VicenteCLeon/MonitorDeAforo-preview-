@@ -4,11 +4,13 @@ import logging
 import threading
 from contextlib import asynccontextmanager
 
+import requests
 import numpy as np
 import torch
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from ultralytics import YOLO
 
 logging.basicConfig(level=logging.INFO)
@@ -19,10 +21,22 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 FRAME_W, FRAME_H = 640, 480
+UPLOAD_INTERVAL = 10  # segundos entre escrituras a Supabase
+
+# Credenciales de Supabase (archivo config.py local, no se sube a git)
+try:
+    from config import SUPABASE_URL, SUPABASE_SERVICE_KEY, GOOGLE_CLIENT_ID
+    SUPABASE_ENABLED = bool(SUPABASE_URL) and bool(SUPABASE_SERVICE_KEY)
+except ImportError:
+    SUPABASE_URL = SUPABASE_SERVICE_KEY = ""
+    SUPABASE_ENABLED = False
+    GOOGLE_CLIENT_ID = ""
+
+ALLOWED_DOMAIN = "@mail.pucv.cl"
 
 CAMERAS_CONFIG = [
-    {"id": "cam1", "name": "Patio IBC", "source": 0},
-    {"id": "cam2", "name": "Comedor IBC", "source": 1},  # índice de Iriun
+    {"id": "cam1", "name": "Camara 1 - Webcam",  "source": 0},
+    {"id": "cam2", "name": "Camara 2 - Celular", "source": 1},
 ]
 
 
@@ -72,7 +86,6 @@ class CameraWorker:
             backend = cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY
             cap = cv2.VideoCapture(self.source, backend)
 
-            # Cámara no disponible → placeholder + reintento
             if not cap.isOpened():
                 self.online = False
                 self.error = f"No se pudo abrir: {self.source}"
@@ -97,7 +110,7 @@ class CameraWorker:
                     with self.lock:
                         self.latest_frame = make_placeholder(f"{self.name}: RECONECTANDO")
                         self.count = 0
-                    break  # rompe loop interno → reabre la cámara
+                    break
 
                 results = self.model.track(
                     frame, classes=0, persist=True,
@@ -140,6 +153,37 @@ CAMERAS = {}
 
 
 # ─────────────────────────────────────────────
+# UPLOADER A SUPABASE
+# ─────────────────────────────────────────────
+def upload_loop():
+    if not SUPABASE_ENABLED:
+        logger.warning("Supabase no configurado - persistencia desactivada.")
+        return
+
+    url = f"{SUPABASE_URL}/rest/v1/samples"
+    headers = {
+        "apikey": SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal",
+    }
+
+    while True:
+        time.sleep(UPLOAD_INTERVAL)
+        rows = [{"camera_id": w.id, "count": w.count} for w in CAMERAS.values()]
+        if not rows:
+            continue
+        try:
+            res = requests.post(url, json=rows, headers=headers, timeout=5)
+            if res.status_code in (200, 201):
+                logger.info(f"Supabase: {len(rows)} muestras subidas")
+            else:
+                logger.warning(f"Supabase respondio {res.status_code}: {res.text}")
+        except Exception as e:
+            logger.warning(f"Supabase sin conexion: {e}")
+
+
+# ─────────────────────────────────────────────
 # CICLO DE VIDA
 # ─────────────────────────────────────────────
 @asynccontextmanager
@@ -155,6 +199,10 @@ async def lifespan(app: FastAPI):
             logger.info(f"Worker iniciado: {cfg['id']}")
         except Exception as e:
             logger.error(f"No se pudo iniciar worker {cfg['id']}: {e}")
+
+    threading.Thread(target=upload_loop, daemon=True).start()
+    logger.info(f"Uploader Supabase: {'activo' if SUPABASE_ENABLED else 'desactivado'}")
+
     yield
     for worker in CAMERAS.values():
         worker.stop()
@@ -208,6 +256,45 @@ async def list_cameras():
     ]
 
 
+class GoogleTokenPayload(BaseModel):
+    id_token: str
+
+
+@app.post("/api/auth/google")
+async def auth_google(payload: GoogleTokenPayload):
+    try:
+        res = requests.get(
+            "https://oauth2.googleapis.com/tokeninfo",
+            params={"id_token": payload.id_token},
+            timeout=5,
+        )
+    except requests.RequestException:
+        raise HTTPException(502, "No se pudo validar el token con Google")
+
+    if res.status_code != 200:
+        raise HTTPException(401, "Token de Google invalido")
+
+    data = res.json()
+    if GOOGLE_CLIENT_ID and data.get("aud") != GOOGLE_CLIENT_ID:
+        raise HTTPException(401, "Token no corresponde al cliente")
+
+    email = (data.get("email") or "").lower()
+    if not email:
+        raise HTTPException(401, "El token no incluye correo")
+
+    if str(data.get("email_verified")).lower() != "true":
+        raise HTTPException(401, "Correo no verificado")
+
+    if not email.endswith(ALLOWED_DOMAIN):
+        raise HTTPException(403, "Dominio de correo no permitido")
+
+    return {
+        "email": email,
+        "name": data.get("name"),
+        "picture": data.get("picture"),
+    }
+
+
 @app.get("/api/counter/{cam_id}")
 async def counter(cam_id: str):
     if cam_id not in CAMERAS:
@@ -220,4 +307,5 @@ async def counter(cam_id: str):
 @app.get("/health")
 async def health():
     return {"status": "online", "device": DEVICE,
-            "cameras": list(CAMERAS.keys())}
+            "cameras": list(CAMERAS.keys()),
+            "supabase": SUPABASE_ENABLED}

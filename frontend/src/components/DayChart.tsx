@@ -128,7 +128,7 @@ export default function DayChart({ data, warnT, dangerT }: DayChartProps) {
               fontSize={10}
               fill="var(--color-ink-4)"
             >
-              {String(d.t).padStart(2, "0")}h
+              {`${String(Math.floor(d.t / 100)).padStart(2, "0")}:${String(d.t % 100).padStart(2, "0")}`}
             </text>
           );
         })}

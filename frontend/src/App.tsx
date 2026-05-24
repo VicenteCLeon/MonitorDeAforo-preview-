@@ -1,7 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import type { Faculty, DayPoint, ActivityEntry } from "./types";
-import { statusOf, fmt, genSpark, clockNow } from "./data";
-import { fetchCameras, streamUrl, CAMERA_META, fetchHourlyOccupancy, TOTAL_CAPACITY } from "./api";
+import { statusOf, fmt, clockNow } from "./data";
+import {
+  fetchCameras,
+  streamUrl,
+  CAMERA_META,
+  fetchHourlyOccupancy,
+  TOTAL_CAPACITY,
+  UnauthorizedError,
+  isTokenExpired,
+} from "./api";
 import type { CameraDTO } from "./api";
 import TopBar from "./components/TopBar";
 import KpiCard from "./components/KpiCard";
@@ -16,7 +24,19 @@ const SEMAFORO_STYLE = "tower" as const;
 const SHOW_SPARK = true;
 const POLL_MS = 2000;
 const HISTORY_MS = 60000;
-const AUTH_STORAGE_KEY = "monitor-aforo-authed";
+const AUTH_STORAGE_KEY = "monitor-aforo-token";
+const SPARK_MAX_POINTS = 24; // ~48 segundos de historial real
+
+// ── Helpers de sesión ──────────────────────────────────────────────────────────
+function readStoredToken(): string | null {
+  const token = localStorage.getItem(AUTH_STORAGE_KEY);
+  if (!token) return null;
+  if (isTokenExpired(token)) {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    return null;
+  }
+  return token;
+}
 
 export default function App() {
   const [now, setNow] = useState(new Date());
@@ -24,37 +44,75 @@ export default function App() {
   const [dayCurve, setDayCurve] = useState<DayPoint[]>([]);
   const [connError, setConnError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isAuthed, setIsAuthed] = useState(false);
+  const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  const [totalSpark, setTotalSpark] = useState<number[]>([]);
 
+  // Historial real de conteos por cámara (no dispara re-renders)
+  const historyRef = useRef<Map<string, number[]>>(new Map());
+
+  // ── Restaurar sesión desde localStorage ────────────────────────────────────
   useEffect(() => {
-    const stored = localStorage.getItem(AUTH_STORAGE_KEY);
-    if (stored === "true") {
-      setIsAuthed(true);
-    }
+    const token = readStoredToken();
+    if (token) setSessionToken(token);
+    else setLoading(false);
   }, []);
 
-  // Reloj
+  // ── Logout ─────────────────────────────────────────────────────────────────
+  const handleLogout = useCallback((reason?: string) => {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    setSessionToken(null);
+    setFaculties([]);
+    setDayCurve([]);
+    setActivity([]);
+    setTotalSpark([]);
+    historyRef.current.clear();
+    setLoading(true);
+    if (reason) setConnError(reason);
+    else setConnError(null);
+  }, []);
+
+  // ── Reloj ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
 
-  // Polling de cámaras al backend local
+  // ── Expiración de sesión ───────────────────────────────────────────────────
   useEffect(() => {
-    if (!isAuthed) return;
+    if (!sessionToken) return;
+    const id = setInterval(() => {
+      if (isTokenExpired(sessionToken)) {
+        handleLogout("Tu sesión expiró. Vuelve a iniciar sesión.");
+      }
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [sessionToken, handleLogout]);
+
+  // ── Polling de cámaras ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!sessionToken) return;
     let cancelled = false;
 
     async function poll() {
       try {
-        const cams: CameraDTO[] = await fetchCameras();
+        const cams: CameraDTO[] = await fetchCameras(sessionToken!);
         if (cancelled) return;
+
         let nextEvents: ActivityEntry[] = [];
+
         setFaculties((prev) => {
           const prevMap = new Map(prev.map((f) => [f.id, f]));
+
           const next = cams.map((c) => {
             const meta = CAMERA_META[c.id] ?? { capacity: 50, building: "Sin ubicación" };
             const prevCount = prevMap.get(c.id)?.occ ?? c.count;
+
+            // Acumular historial real para el sparkline
+            const prevHist = historyRef.current.get(c.id) ?? [];
+            const newHist = [...prevHist, c.count].slice(-SPARK_MAX_POINTS);
+            historyRef.current.set(c.id, newHist);
+
             return {
               id: c.id,
               name: c.name,
@@ -66,9 +124,11 @@ export default function App() {
               delta: c.count - prevCount,
               lastUpd: 0,
               online: c.online,
-              streamUrl: streamUrl(c.id),
+              streamUrl: streamUrl(c.id, sessionToken!),
+              spark: newHist,
             };
           });
+
           const timeLabel = clockNow(new Date());
           const events: ActivityEntry[] = [];
 
@@ -80,21 +140,13 @@ export default function App() {
               events.push({
                 t: timeLabel,
                 kind: "danger",
-                text: (
-                  <span>
-                    <b>{f.name}</b> camara offline
-                  </span>
-                ),
+                text: <span><b>{f.name}</b> cámara offline</span>,
               });
             } else if (prevF.online === false && f.online !== false) {
               events.push({
                 t: timeLabel,
                 kind: "ok",
-                text: (
-                  <span>
-                    <b>{f.name}</b> camara en linea
-                  </span>
-                ),
+                text: <span><b>{f.name}</b> cámara en línea</span>,
               });
             }
 
@@ -109,31 +161,19 @@ export default function App() {
                   events.push({
                     t: timeLabel,
                     kind: "danger",
-                    text: (
-                      <span>
-                        <b>{f.name}</b> supero {DANGER_T}% de aforo
-                      </span>
-                    ),
+                    text: <span><b>{f.name}</b> superó {DANGER_T}% de aforo</span>,
                   });
                 } else if (nextStatus === "warn") {
                   events.push({
                     t: timeLabel,
                     kind: "warn",
-                    text: (
-                      <span>
-                        <b>{f.name}</b> entro en zona ambar
-                      </span>
-                    ),
+                    text: <span><b>{f.name}</b> entró en zona ámbar</span>,
                   });
                 } else {
                   events.push({
                     t: timeLabel,
                     kind: "ok",
-                    text: (
-                      <span>
-                        <b>{f.name}</b> volvio a nivel normal
-                      </span>
-                    ),
+                    text: <span><b>{f.name}</b> volvió a nivel normal</span>,
                   });
                 }
               }
@@ -143,12 +183,22 @@ export default function App() {
           nextEvents = events;
           return next;
         });
+
+        // Historial del aforo total para el KPI sparkline
+        const newTotal = cams.reduce((s, c) => s + c.count, 0);
+        setTotalSpark((prev) => [...prev, newTotal].slice(-SPARK_MAX_POINTS));
+
         if (nextEvents.length > 0) {
           setActivity((prev) => [...nextEvents, ...prev].slice(0, 8));
         }
         setConnError(null);
-      } catch {
-        if (!cancelled) setConnError("Sin conexión con el backend (puerto 8000)");
+      } catch (err) {
+        if (cancelled) return;
+        if (err instanceof UnauthorizedError) {
+          handleLogout("Sesión inválida. Vuelve a iniciar sesión.");
+          return;
+        }
+        setConnError("Sin conexión con el backend (puerto 8000)");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -160,21 +210,11 @@ export default function App() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [isAuthed]);
+  }, [sessionToken, handleLogout]);
 
-  function handleLogout() {
-    localStorage.removeItem(AUTH_STORAGE_KEY);
-    setIsAuthed(false);
-    setFaculties([]);
-    setDayCurve([]);
-    setConnError(null);
-    setLoading(true);
-    setActivity([]);
-  }
-
-  // Histórico desde Supabase
+  // ── Histórico desde Supabase ───────────────────────────────────────────────
   useEffect(() => {
-    if (!isAuthed) return;
+    if (!sessionToken) return;
     let cancelled = false;
 
     async function loadHistory() {
@@ -201,21 +241,23 @@ export default function App() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [isAuthed]);
+  }, [sessionToken]);
 
-  if (!isAuthed) {
+  // ── Login ──────────────────────────────────────────────────────────────────
+  if (!sessionToken) {
     return (
       <Login
-        onSuccess={() => {
+        onSuccess={(token, _email) => {
+          localStorage.setItem(AUTH_STORAGE_KEY, token);
+          setSessionToken(token);
           setConnError(null);
           setLoading(true);
-          localStorage.setItem(AUTH_STORAGE_KEY, "true");
-          setIsAuthed(true);
         }}
       />
     );
   }
 
+  // ── Dashboard ──────────────────────────────────────────────────────────────
   const totalOcc = faculties.reduce((s, f) => s + f.occ, 0);
   const totalCap = faculties.reduce((s, f) => s + f.cap, 0);
   const overallPct = totalCap > 0 ? Math.round((totalOcc / totalCap) * 100) : 0;
@@ -228,7 +270,7 @@ export default function App() {
     <div className="min-h-screen bg-bg">
       <div className="px-3 pt-3 pb-[88px] md:px-7 md:pt-5 md:pb-10 max-w-[1440px] mx-auto">
 
-        <TopBar now={now} overallStatus={overallStatus} onLogout={handleLogout} />
+        <TopBar now={now} overallStatus={overallStatus} onLogout={() => handleLogout()} />
 
         {connError && (
           <div className="mt-3 px-3.5 py-2.5 rounded-[10px] border border-danger bg-danger-bg text-danger text-[12px] font-medium flex items-center gap-2">
@@ -244,7 +286,8 @@ export default function App() {
             label="Aforo total" value={fmt(totalOcc)} unit={`/ ${fmt(totalCap)}`}
             delta={`${overallPct}%`}
             deltaKind={overallStatus === "danger" ? "up" : overallStatus === "warn" ? "flat" : "down"}
-            foot="Personas detectadas ahora" spark={genSpark(Math.max(totalOcc, 1), 0.03)}
+            foot="Personas detectadas ahora"
+            spark={totalSpark.length >= 2 ? totalSpark : undefined}
           />
           <KpiCard
             label="Ocupación general" value={`${overallPct}`} unit="%"
@@ -317,7 +360,6 @@ export default function App() {
           </div>
         </div>
       </div>
-
     </div>
   );
 }

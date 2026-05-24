@@ -1,6 +1,5 @@
-import React from "react";
 import type { Faculty, SemaforoStyle } from "../types";
-import { statusOf, fmt, genSpark } from "../data";
+import { statusOf, fmt } from "../data";
 import Semaforo from "./Semaforo";
 import Sparkline from "./Sparkline";
 
@@ -15,9 +14,11 @@ interface FacultyCardProps {
 export default function FacultyCard({ f, warnT, dangerT, semaforoStyle, showSpark }: FacultyCardProps) {
   const pct = f.cap > 0 ? Math.round((f.occ / f.cap) * 100) : 0;
   const status = statusOf(pct, warnT, dangerT);
-  const spark = React.useMemo(() => genSpark(f.occ), [f.id, f.occ]);
   const delta = f.delta ?? 0;
   const online = f.online !== false;
+
+  // Usar historial real del polling — sin generar números aleatorios
+  const spark = f.spark ?? [];
 
   const sparkColor =
     status === "danger" ? "oklch(0.62 0.18 25)" : status === "warn" ? "oklch(0.72 0.16 80)" : "oklch(0.62 0.14 145)";
@@ -62,8 +63,6 @@ export default function FacultyCard({ f, warnT, dangerT, semaforoStyle, showSpar
         <Semaforo status={status} style={semaforoStyle} />
       </div>
 
-
-
       {/* Count */}
       <div className="flex items-end justify-between gap-2">
         <div className="font-mono text-[32px] font-medium leading-none tracking-tight">
@@ -102,7 +101,10 @@ export default function FacultyCard({ f, warnT, dangerT, semaforoStyle, showSpar
           <span className="text-ink-4">·</span>
           <span>{online ? "actualizado en vivo" : "desconectada"}</span>
         </div>
-        {showSpark && <Sparkline data={spark} color={sparkColor} />}
+        {/* Sparkline real — aparece después de 2+ lecturas, crece hasta ~48s de historial */}
+        {showSpark && spark.length >= 2 && (
+          <Sparkline data={spark} color={sparkColor} />
+        )}
       </div>
     </div>
   );

@@ -14,6 +14,8 @@ export interface Faculty {
   online?: boolean;
   /** URL del stream MJPEG de la cámara */
   streamUrl?: string;
+  /** Historial real de conteos (últimas N lecturas del polling) */
+  spark?: number[];
 }
 
 export interface DayPoint {

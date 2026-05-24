@@ -4,7 +4,8 @@ import { verifyGoogleToken } from "../api";
 const ALLOWED_DOMAIN = "@mail.pucv.cl";
 
 interface LoginProps {
-  onSuccess: (email: string) => void;
+  /** Recibe el JWT de sesión y el correo del usuario autenticado. */
+  onSuccess: (token: string, email: string) => void;
 }
 
 export default function Login({ onSuccess }: LoginProps) {
@@ -32,9 +33,13 @@ export default function Login({ onSuccess }: LoginProps) {
           setError(null);
           try {
             const result = await verifyGoogleToken(response.credential);
-            onSuccess(result.email);
-          } catch {
-            setError("No se pudo verificar el correo con Google. Intenta de nuevo.");
+            onSuccess(result.token, result.email);
+          } catch (err: unknown) {
+            if (err instanceof Error && err.message === "DOMAIN_NOT_ALLOWED") {
+              setError(`Solo se permiten correos ${ALLOWED_DOMAIN}.`);
+            } else {
+              setError("No se pudo verificar el correo con Google. Intenta de nuevo.");
+            }
           } finally {
             setLoading(false);
           }
@@ -67,7 +72,7 @@ export default function Login({ onSuccess }: LoginProps) {
   return (
     <div className="min-h-screen bg-bg">
       <div className="relative min-h-screen overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgb(68, 128, 207),transparent_55%),radial-gradient(circle_at_bottom_right,rgba(120,170,255,0.25),transparent_55%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgb(68,128,207),transparent_55%),radial-gradient(circle_at_bottom_right,rgba(120,170,255,0.25),transparent_55%)]" />
         <div className="relative z-10 flex min-h-screen items-center justify-center px-4 py-10">
           <div className="w-full max-w-[420px] rounded-[18px] border border-line bg-surface/90 p-6 shadow-[0_20px_80px_rgba(20,20,20,0.15)] backdrop-blur">
             <div className="mb-5">
@@ -76,7 +81,7 @@ export default function Login({ onSuccess }: LoginProps) {
                   <img src="/Logo1.png" alt="SpotCheck" className="w-full h-auto" />
                 </div>
               </div>
-              <h1 className="mt-3 text-[22px] font-semibold text-ink">Inicio de sesion</h1>
+              <h1 className="mt-3 text-[22px] font-semibold text-ink">Inicio de sesión</h1>
               <p className="mt-1 text-[12.5px] text-ink-3">
                 Solo correos institucionales pueden acceder al panel.
               </p>
@@ -84,17 +89,21 @@ export default function Login({ onSuccess }: LoginProps) {
 
             <div className="space-y-4">
               <div className="text-[12px] text-ink-3">
-                Debes iniciar sesion con un correo {ALLOWED_DOMAIN} valido.
+                Debes iniciar sesión con un correo <span className="font-mono">{ALLOWED_DOMAIN}</span> válido.
               </div>
               <div className="flex justify-center">
                 <div ref={buttonRef} />
               </div>
-              {loading && <div className="text-center text-[11.5px] text-ink-3">Verificando credenciales…</div>}
-              {error && <div className="text-center text-[11.5px] text-danger">{error}</div>}
+              {loading && (
+                <div className="text-center text-[11.5px] text-ink-3">Verificando credenciales…</div>
+              )}
+              {error && (
+                <div className="text-center text-[11.5px] text-danger">{error}</div>
+              )}
             </div>
 
             <div className="mt-5 flex items-center justify-between text-[11px] text-ink-4">
-              <span>Acceso seguro</span>
+              <span>Acceso seguro · Sesión válida 8 horas</span>
             </div>
           </div>
         </div>

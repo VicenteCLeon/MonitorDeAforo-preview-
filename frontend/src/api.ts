@@ -1,22 +1,22 @@
-// Conexión con el backend FastAPI
-export const API_BASE = "http://localhost:8000";
+// ── Conexión con el backend FastAPI ───────────────────────────────────────────
+export const API_BASE = (import.meta.env.VITE_API_BASE as string) || "http://localhost:8000";
 
-// Supabase — la anon key es PÚBLICA, puede ir en el frontend
-export const SUPABASE_URL = "https://elbmtpcjlwofulpolnbw.supabase.co";
-export const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVsYm10cGNqbHdvZnVscG9sbmJ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxOTczNTYsImV4cCI6MjA5NDc3MzM1Nn0.q4fWVPxYJcFkoU0ubzDY8NlXTOiFiWjr4OGqnM2yrno";  // anon public key
+// ── Supabase (anon key — pública por diseño) ──────────────────────────────────
+export const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
+export const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
-// El backend no conoce la capacidad de cada zona — se define aquí.
+// ── Metadatos de cámaras (capacidad y ubicación) ──────────────────────────────
 export const CAMERA_META: Record<string, { capacity: number; building: string }> = {
     cam1: { capacity: 30, building: "Acceso principal · Webcam" },
     cam2: { capacity: 30, building: "Acceso secundario · Cámara móvil" },
 };
 
-// Capacidad total monitorizada (suma de todas las cámaras)
 export const TOTAL_CAPACITY = Object.values(CAMERA_META).reduce(
     (sum, m) => sum + m.capacity,
     0,
 );
 
+// ── Tipos ─────────────────────────────────────────────────────────────────────
 export interface CameraDTO {
     id: string;
     name: string;
@@ -31,21 +31,49 @@ export interface HourPoint {
 }
 
 export interface GoogleAuthResult {
+    token: string;   // JWT de sesión firmado por el backend
     email: string;
     name?: string;
     picture?: string;
 }
 
-export async function fetchCameras(): Promise<CameraDTO[]> {
-    const res = await fetch(`${API_BASE}/api/cameras`);
+// ── Error especial para respuestas 401 ────────────────────────────────────────
+export class UnauthorizedError extends Error {
+    constructor() {
+        super("UNAUTHORIZED");
+        this.name = "UnauthorizedError";
+    }
+}
+
+// ── Helper: fetch autenticado con JWT ─────────────────────────────────────────
+async function authFetch(url: string, token: string, options: RequestInit = {}): Promise<Response> {
+    const res = await fetch(url, {
+        ...options,
+        headers: {
+            ...(options.headers ?? {}),
+            Authorization: `Bearer ${token}`,
+        },
+    });
+    if (res.status === 401) throw new UnauthorizedError();
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res;
+}
+
+// ── Endpoints del backend ─────────────────────────────────────────────────────
+export async function fetchCameras(token: string): Promise<CameraDTO[]> {
+    const res = await authFetch(`${API_BASE}/api/cameras`, token);
     return res.json();
 }
 
-export function streamUrl(camId: string): string {
-    return `${API_BASE}/video_feed/${camId}`;
+/**
+ * URL del stream MJPEG con el JWT en query param.
+ * (Los elementos <img src> no admiten headers personalizados.)
+ */
+export function streamUrl(camId: string, token: string): string {
+    return `${API_BASE}/video_feed/${camId}?token=${encodeURIComponent(token)}`;
 }
 
+// ── Supabase: histórico de ocupación (usa anon key directamente) ───────────────
 export async function fetchHourlyOccupancy(): Promise<HourPoint[]> {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/recent_occupancy`, {
         method: "POST",
@@ -60,14 +88,30 @@ export async function fetchHourlyOccupancy(): Promise<HourPoint[]> {
     return res.json();
 }
 
+// ── Auth: verificar token Google y obtener JWT de sesión ──────────────────────
 export async function verifyGoogleToken(idToken: string): Promise<GoogleAuthResult> {
     const res = await fetch(`${API_BASE}/api/auth/google`, {
         method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id_token: idToken }),
     });
+    if (res.status === 403) throw new Error("DOMAIN_NOT_ALLOWED");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
+}
+
+// ── Utilidad: decodificar JWT sin verificar firma (solo para leer exp) ─────────
+export function parseTokenExpiry(token: string): number | null {
+    try {
+        const payload = JSON.parse(atob(token.split(".")[1]));
+        return typeof payload.exp === "number" ? payload.exp * 1000 : null;
+    } catch {
+        return null;
+    }
+}
+
+export function isTokenExpired(token: string): boolean {
+    const exp = parseTokenExpiry(token);
+    if (exp === null) return true;
+    return Date.now() >= exp;
 }
